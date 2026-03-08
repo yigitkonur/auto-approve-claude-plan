@@ -14,12 +14,21 @@ BACKUP_DIR="$HOOK_DIR/.backups"
 REPO_RAW="https://raw.githubusercontent.com/yigitkonur/hooks-claude-code/main"
 
 # ── Colors ───────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
+if [ -t 1 ]; then
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  YELLOW='\033[1;33m'
+  CYAN='\033[0;36m'
+  BOLD='\033[1m'
+  DIM='\033[2m'
+else
+  RED=''
+  GREEN=''
+  YELLOW=''
+  CYAN=''
+  BOLD=''
+  DIM=''
+fi
 NC='\033[0m'
 
 ok()   { printf "${GREEN}[ok]${NC} %s\n" "$1"; }
@@ -98,7 +107,7 @@ case "$MODE" in
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
-if [ -f "${SCRIPT_DIR}/${HOOK_SRC}" ]; then
+if [ -f "${SCRIPT_DIR}/install.sh" ] && [ -f "${SCRIPT_DIR}/${HOOK_SRC}" ]; then
   cp -f "${SCRIPT_DIR}/${HOOK_SRC}" "$HOOK_SCRIPT"
 else
   info "Downloading hook script from GitHub..."
@@ -147,6 +156,7 @@ else
   info "Backed up settings.json to ${BACKUP_DIR}/"
 
   TMP=$(mktemp)
+  trap 'rm -f "${TMP:-}"' EXIT
 
   if ! jq --arg cmd "$HOOK_CMD" '
     .hooks //= {} |
@@ -165,9 +175,9 @@ else
     if .hooks.Stop then
       .hooks.Stop = [
         .hooks.Stop[] |
-        .hooks = [.hooks[] | select(.command | test("auto-approve|claude-plan-hook"; "i") | not)]
+        .hooks = [(.hooks // [])[] | select(.command | test("auto-approve|claude-plan-hook"; "i") | not)]
       ] |
-      .hooks.Stop = [.hooks.Stop[] | select(.hooks | length > 0)]
+      .hooks.Stop = [.hooks.Stop[] | select((.hooks // []) | length > 0)]
     else . end |
     if .hooks.Stop == [] then del(.hooks.Stop) else . end
   ' "$SETTINGS" > "$TMP" 2>/dev/null; then
