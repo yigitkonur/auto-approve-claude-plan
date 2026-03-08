@@ -3,15 +3,14 @@ set -euo pipefail
 
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  claude-plan-hook installer                                     ║
-# ║  Auto-approve Claude Code plans + optional Craft.do archiving  ║
+# ║  Auto-approve Claude Code plans — classic or orchestrator mode ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 HOOK_DIR="$HOME/.claude/hooks"
 SETTINGS="$HOME/.claude/settings.json"
-CRAFT_CONFIG="$HOOK_DIR/craft-config.env"
 HOOK_SCRIPT="$HOOK_DIR/claude-plan-hook.sh"
+BACKUP_DIR="$HOOK_DIR/.backups"
 
-# GitHub raw URL for remote install (curl | bash)
 REPO_RAW="https://raw.githubusercontent.com/yigitkonur/hooks-claude-code/main"
 
 # ── Colors ───────────────────────────────────────────────────────────
@@ -31,7 +30,7 @@ info() { printf "${CYAN}[..]${NC} %s\n" "$1"; }
 # ── Banner ───────────────────────────────────────────────────────────
 printf "\n"
 printf "${BOLD}  claude-plan-hook${NC}\n"
-printf "${DIM}  Auto-approve Claude Code plans. Archive them to Craft.${NC}\n"
+printf "${DIM}  Auto-approve Claude Code plans. Stop clicking buttons.${NC}\n"
 printf "\n"
 
 # ── Prerequisites ────────────────────────────────────────────────────
@@ -42,148 +41,79 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-# ── Detect existing install ──────────────────────────────────────────
-CURRENT_MODE=""
-if [ -f "$HOOK_SCRIPT" ]; then
-  if head -5 "$HOOK_SCRIPT" | grep -q "Mode 1"; then
-    CURRENT_MODE="1"
-  elif head -5 "$HOOK_SCRIPT" | grep -q "Mode 2"; then
-    CURRENT_MODE="2"
-  elif head -5 "$HOOK_SCRIPT" | grep -q "Mode 3"; then
-    CURRENT_MODE="3"
-  else
-    CURRENT_MODE="unknown"
+# ── Validate existing settings.json ─────────────────────────────────
+if [ -f "$SETTINGS" ]; then
+  if ! jq empty "$SETTINGS" 2>/dev/null; then
+    err "settings.json is not valid JSON — refusing to modify."
+    printf "  ${DIM}Fix ${SETTINGS} manually, then re-run the installer.${NC}\n"
+    exit 1
   fi
 fi
 
-if [ -n "$CURRENT_MODE" ]; then
-  case "$CURRENT_MODE" in
-    1) warn "Already installed: Mode 1 (auto-approve only)" ;;
-    2) warn "Already installed: Mode 2 (auto-approve + Craft)" ;;
-    3) warn "Already installed: Mode 3 (Craft only)" ;;
-    *) warn "Already installed: unrecognized version" ;;
-  esac
+# ── Detect & clean existing install ──────────────────────────────────
+if [ -f "$HOOK_SCRIPT" ]; then
+  if grep -q "Orchestrator" "$HOOK_SCRIPT" 2>/dev/null; then
+    warn "Already installed: Orchestrator mode"
+  elif grep -q "Classic" "$HOOK_SCRIPT" 2>/dev/null; then
+    warn "Already installed: Classic mode"
+  else
+    warn "Already installed: unrecognized version"
+  fi
+
+  # Backup old hook before overwriting
+  mkdir -p "$BACKUP_DIR"
+  TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
+  cp -f "$HOOK_SCRIPT" "$BACKUP_DIR/claude-plan-hook.${TIMESTAMP}.sh"
+  info "Backed up existing hook to ${BACKUP_DIR}/"
+
+  rm -f "$HOOK_SCRIPT"
   printf "\n"
 fi
 
 # ── Mode selection ───────────────────────────────────────────────────
 printf "${BOLD}Choose a mode:${NC}\n\n"
-printf "  ${BOLD}1${NC}  Auto-approve only\n"
-printf "     ${DIM}Plans are approved instantly. No external services.${NC}\n\n"
-printf "  ${BOLD}2${NC}  Auto-approve + publish to Craft.do\n"
-printf "     ${DIM}Plans are approved and archived as subpages in Craft.${NC}\n\n"
-printf "  ${BOLD}3${NC}  Craft.do publish only (no auto-approve)\n"
-printf "     ${DIM}Plans are archived in Craft but you still approve manually.${NC}\n\n"
+printf "  ${BOLD}1${NC}  Classic\n"
+printf "     ${DIM}Auto-approve plans instantly. Simple and silent.${NC}\n\n"
+printf "  ${BOLD}2${NC}  Orchestrator ${DIM}(recommended)${NC}\n"
+printf "     ${DIM}Auto-approve + inject a directive that makes Claude execute${NC}\n"
+printf "     ${DIM}plans with precision, spawn subagents for complex tasks,${NC}\n"
+printf "     ${DIM}and enforce strict BSV completion criteria.${NC}\n\n"
 
 while true; do
-  printf "${CYAN}>${NC} Enter mode [1/2/3]: "
+  printf "${CYAN}>${NC} Enter mode [1/2]: "
   read -r MODE
   case "$MODE" in
-    1|2|3) break ;;
-    *) err "Please enter 1, 2, or 3." ;;
+    1|2) break ;;
+    *) err "Please enter 1 or 2." ;;
   esac
 done
 printf "\n"
 
-# ── Craft credentials (modes 2 and 3) ───────────────────────────────
-CRAFT_API_URL=""
-CRAFT_PAGE_ID=""
-
-if [ "$MODE" = "2" ] || [ "$MODE" = "3" ]; then
-  if ! command -v curl &>/dev/null; then
-    err "curl is required for Craft integration but not found."
-    exit 1
-  fi
-
-  printf "${BOLD}Craft.do setup${NC}\n"
-  printf "${DIM}You need a Craft API connection URL and a parent page ID.${NC}\n"
-  printf "${DIM}Create an API connection in Craft Settings > API, then copy the endpoint.${NC}\n\n"
-
-  # Load existing values as defaults
-  if [ -f "$CRAFT_CONFIG" ]; then
-    source "$CRAFT_CONFIG" 2>/dev/null || true
-  fi
-
-  # API URL
-  if [ -n "$CRAFT_API_URL" ]; then
-    printf "${CYAN}>${NC} Craft API URL ${DIM}[${CRAFT_API_URL}]${NC}: "
-    read -r INPUT_URL
-    [ -n "$INPUT_URL" ] && CRAFT_API_URL="$INPUT_URL"
-  else
-    printf "${CYAN}>${NC} Craft API URL (e.g. https://connect.craft.do/links/[your-key-id]/api/v1): "
-    read -r CRAFT_API_URL
-  fi
-
-  # Strip trailing slash and /blocks suffix
-  CRAFT_API_URL="${CRAFT_API_URL%/}"
-  CRAFT_API_URL="${CRAFT_API_URL%/blocks}"
-
-  if [ -z "$CRAFT_API_URL" ]; then
-    err "Craft API URL is required for this mode."
-    exit 1
-  fi
-
-  # Page ID
-  if [ -n "$CRAFT_PAGE_ID" ]; then
-    printf "${CYAN}>${NC} Parent page ID ${DIM}[${CRAFT_PAGE_ID}]${NC}: "
-    read -r INPUT_PID
-    [ -n "$INPUT_PID" ] && CRAFT_PAGE_ID="$INPUT_PID"
-  else
-    printf "${CYAN}>${NC} Parent page ID (UUID of the Craft page to nest plans under): "
-    read -r CRAFT_PAGE_ID
-  fi
-
-  if [ -z "$CRAFT_PAGE_ID" ]; then
-    err "Parent page ID is required for this mode."
-    exit 1
-  fi
-
-  printf "\n"
-
-  # Test connectivity
-  info "Testing Craft API connectivity..."
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${CRAFT_API_URL}/blocks" \
-    -H "Content-Type: application/json" \
-    -d "{\"blocks\":[{\"type\":\"text\",\"markdown\":\"connectivity test — safe to delete\"}],\"position\":{\"position\":\"end\",\"pageId\":\"${CRAFT_PAGE_ID}\"}}" 2>/dev/null || echo "000")
-
-  if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
-    ok "Craft API reachable (HTTP ${HTTP_CODE})"
-  else
-    warn "Craft API returned HTTP ${HTTP_CODE}. Check your URL and page ID."
-    printf "  ${DIM}Continuing anyway — you can fix credentials later in:${NC}\n"
-    printf "  ${DIM}${CRAFT_CONFIG}${NC}\n\n"
-  fi
-
-  # Save credentials
-  mkdir -p "$HOOK_DIR"
-  cat > "$CRAFT_CONFIG" <<ENVEOF
-# claude-plan-hook: Craft.do credentials
-# Generated by install.sh — edit freely
-CRAFT_API_URL="${CRAFT_API_URL}"
-CRAFT_PAGE_ID="${CRAFT_PAGE_ID}"
-ENVEOF
-  chmod 600 "$CRAFT_CONFIG"
-  ok "Craft credentials saved to ${CRAFT_CONFIG}"
-fi
-
 # ── Install hook script ─────────────────────────────────────────────
 mkdir -p "$HOOK_DIR"
 
-# Determine hook source file
 case "$MODE" in
   1) HOOK_SRC="hooks/auto-approve-plan.sh" ;;
-  2) HOOK_SRC="hooks/auto-approve-craft.sh" ;;
-  3) HOOK_SRC="hooks/craft-only.sh" ;;
+  2) HOOK_SRC="hooks/auto-approve-orchestrator.sh" ;;
 esac
 
-# Try local copy first (cloned repo), fall back to curl (pipe install)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 if [ -f "${SCRIPT_DIR}/${HOOK_SRC}" ]; then
   cp -f "${SCRIPT_DIR}/${HOOK_SRC}" "$HOOK_SCRIPT"
 else
   info "Downloading hook script from GitHub..."
-  curl -fsSL "${REPO_RAW}/${HOOK_SRC}" -o "$HOOK_SCRIPT"
+  if ! curl -fsSL "${REPO_RAW}/${HOOK_SRC}" -o "$HOOK_SCRIPT"; then
+    err "Failed to download hook script."
+    exit 1
+  fi
 fi
+
+# Validate the hook script is not empty / truncated
+if [ ! -s "$HOOK_SCRIPT" ]; then
+  err "Hook script is empty — download may have failed."
+  exit 1
+fi
+
 chmod +x "$HOOK_SCRIPT"
 ok "Hook script installed to ${HOOK_SCRIPT}"
 
@@ -191,7 +121,6 @@ ok "Hook script installed to ${HOOK_SCRIPT}"
 HOOK_CMD="~/.claude/hooks/claude-plan-hook.sh"
 
 if [ ! -f "$SETTINGS" ]; then
-  # Create a minimal settings.json
   cat > "$SETTINGS" <<ENDJSON
 {
   "hooks": {
@@ -211,22 +140,21 @@ if [ ! -f "$SETTINGS" ]; then
 ENDJSON
   ok "Created ${SETTINGS}"
 else
+  # Backup settings.json before modifying
+  mkdir -p "$BACKUP_DIR"
+  TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
+  cp -f "$SETTINGS" "$BACKUP_DIR/settings.${TIMESTAMP}.json"
+  info "Backed up settings.json to ${BACKUP_DIR}/"
+
   TMP=$(mktemp)
 
-  jq --arg cmd "$HOOK_CMD" '
-    # Ensure hooks object exists
+  if ! jq --arg cmd "$HOOK_CMD" '
     .hooks //= {} |
-
-    # Ensure PermissionRequest array exists
     .hooks.PermissionRequest //= [] |
-
-    # Remove any existing ExitPlanMode matcher entries (clean swap)
     .hooks.PermissionRequest = [
       .hooks.PermissionRequest[] |
       select(.matcher != "ExitPlanMode")
     ] |
-
-    # Add the new ExitPlanMode entry
     .hooks.PermissionRequest += [{
       "matcher": "ExitPlanMode",
       "hooks": [{
@@ -234,21 +162,52 @@ else
         "command": $cmd
       }]
     }] |
-
-    # Remove old broken Stop hook entries referencing auto-approve
     if .hooks.Stop then
       .hooks.Stop = [
         .hooks.Stop[] |
-        .hooks = [.hooks[] | select(.command | test("auto-approve"; "i") | not)]
+        .hooks = [.hooks[] | select(.command | test("auto-approve|claude-plan-hook"; "i") | not)]
       ] |
       .hooks.Stop = [.hooks.Stop[] | select(.hooks | length > 0)]
     else . end |
-
-    # Clean up empty Stop array
     if .hooks.Stop == [] then del(.hooks.Stop) else . end
-  ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+  ' "$SETTINGS" > "$TMP" 2>/dev/null; then
+    err "jq transform failed — settings.json not modified."
+    rm -f "$TMP"
+    exit 1
+  fi
 
+  # Validate the output is valid JSON before replacing
+  if ! jq empty "$TMP" 2>/dev/null; then
+    err "jq produced invalid JSON — settings.json not modified."
+    rm -f "$TMP"
+    exit 1
+  fi
+
+  # Verify output is not empty / smaller than a sane minimum
+  NEW_SIZE=$(wc -c < "$TMP" | tr -d ' ')
+  if [ "$NEW_SIZE" -lt 10 ]; then
+    err "jq output too small (${NEW_SIZE} bytes) — settings.json not modified."
+    rm -f "$TMP"
+    exit 1
+  fi
+
+  mv "$TMP" "$SETTINGS"
   ok "Updated ${SETTINGS}"
+fi
+
+# ── Clean up old Craft config if present ─────────────────────────────
+CRAFT_CONFIG="$HOOK_DIR/craft-config.env"
+if [ -f "$CRAFT_CONFIG" ]; then
+  mkdir -p "$BACKUP_DIR"
+  mv "$CRAFT_CONFIG" "$BACKUP_DIR/craft-config.env.bak"
+  info "Moved old Craft config to backups (no longer needed)"
+fi
+
+# ── Prune old backups (keep last 5) ────────────────────────────────
+if [ -d "$BACKUP_DIR" ]; then
+  # shellcheck disable=SC2012
+  ls -t "$BACKUP_DIR"/settings.*.json 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+  ls -t "$BACKUP_DIR"/claude-plan-hook.*.sh 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────
@@ -257,23 +216,19 @@ printf "${GREEN}${BOLD}Installed!${NC}\n\n"
 
 case "$MODE" in
   1)
-    printf "  Mode:   ${BOLD}Auto-approve only${NC}\n"
-    printf "  Effect: Plans are approved instantly when Claude calls ExitPlanMode.\n"
+    printf "  Mode:   ${BOLD}Classic${NC}\n"
+    printf "  Effect: Plans are approved instantly. No bells, no whistles.\n"
     ;;
   2)
-    printf "  Mode:   ${BOLD}Auto-approve + Craft${NC}\n"
-    printf "  Effect: Plans are approved instantly AND archived in Craft.do.\n"
-    printf "  Craft:  ${DIM}${CRAFT_API_URL}${NC}\n"
-    ;;
-  3)
-    printf "  Mode:   ${BOLD}Craft publish only${NC}\n"
-    printf "  Effect: Plans are archived in Craft.do. You still approve manually.\n"
-    printf "  Craft:  ${DIM}${CRAFT_API_URL}${NC}\n"
+    printf "  Mode:   ${BOLD}Orchestrator${NC}\n"
+    printf "  Effect: Plans are approved instantly. Claude receives a directive\n"
+    printf "          to execute step-by-step, delegate via subagents for complex\n"
+    printf "          tasks, and enforce 100%% completion with BSV criteria.\n"
     ;;
 esac
 
 printf "\n"
 printf "  ${DIM}Restart Claude Code for changes to take effect.${NC}\n"
-printf "  ${DIM}To change modes, run the installer again.${NC}\n"
+printf "  ${DIM}To switch modes, run the installer again.${NC}\n"
 printf "  ${DIM}To uninstall: curl -fsSL ${REPO_RAW}/uninstall.sh | bash${NC}\n"
 printf "\n"
