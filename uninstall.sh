@@ -31,8 +31,6 @@ else
   info "Hook script not found (already removed)"
 fi
 
-rm -f "$HOOK_DIR/craft-config.env" 2>/dev/null
-
 if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
   if jq -e '.hooks.PermissionRequest[]? | select(.matcher == "ExitPlanMode")' "$SETTINGS" &>/dev/null; then
     TMP=$(mktemp)

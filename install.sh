@@ -205,14 +205,6 @@ else
   ok "Updated ${SETTINGS}"
 fi
 
-# ── Clean up old Craft config if present ─────────────────────────────
-CRAFT_CONFIG="$HOOK_DIR/craft-config.env"
-if [ -f "$CRAFT_CONFIG" ]; then
-  mkdir -p "$BACKUP_DIR"
-  mv "$CRAFT_CONFIG" "$BACKUP_DIR/craft-config.env.bak"
-  info "Moved old Craft config to backups (no longer needed)"
-fi
-
 # ── Prune old backups (keep last 5) ────────────────────────────────
 if [ -d "$BACKUP_DIR" ]; then
   # shellcheck disable=SC2012

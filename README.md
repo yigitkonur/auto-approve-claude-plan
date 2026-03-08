@@ -93,6 +93,10 @@ rm ~/.claude/hooks/claude-plan-hook.sh
 # then remove the ExitPlanMode entry from ~/.claude/settings.json
 ```
 
+## compatibility note
+
+issue #1 reported a `jq sub()` regex bug in the old Craft integration. that code path no longer exists in this repository because Craft support was removed entirely. the current scripts do not use `sub()` or Craft payload generation.
+
 ## license
 
 MIT
