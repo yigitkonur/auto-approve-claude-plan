@@ -32,7 +32,10 @@ else
 fi
 
 if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
-  if jq -e '.hooks.PermissionRequest[]? | select(.matcher == "ExitPlanMode")' "$SETTINGS" &>/dev/null; then
+  if jq -e '
+    (.hooks.PermissionRequest[]? | select(.matcher == "ExitPlanMode"))
+    , (.hooks.PostToolUse[]? | select(.matcher == "ExitPlanMode"))
+  ' "$SETTINGS" &>/dev/null; then
     TMP=$(mktemp)
     trap 'rm -f "${TMP:-}"' EXIT
 
@@ -42,6 +45,11 @@ if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
         select(.matcher != "ExitPlanMode")
       ] |
       if .hooks.PermissionRequest == [] then del(.hooks.PermissionRequest) else . end |
+      .hooks.PostToolUse = [
+        .hooks.PostToolUse[]? |
+        select(.matcher != "ExitPlanMode")
+      ] |
+      if .hooks.PostToolUse == [] then del(.hooks.PostToolUse) else . end |
       if .hooks == {} then del(.hooks) else . end
     ' "$SETTINGS" > "$TMP" 2>/dev/null; then
       warn "jq failed — settings.json not modified."
@@ -56,9 +64,9 @@ if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
     fi
 
     mv "$TMP" "$SETTINGS"
-    ok "Removed hook entry from ${SETTINGS}"
+    ok "Removed hook entries from ${SETTINGS}"
   else
-    info "No hook entry found in settings.json"
+    info "No hook entries found in settings.json"
   fi
 else
   if [ ! -f "$SETTINGS" ]; then

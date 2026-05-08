@@ -130,23 +130,39 @@ ok "Hook script installed to ${HOOK_SCRIPT}"
 HOOK_CMD="~/.claude/hooks/claude-plan-hook.sh"
 
 if [ ! -f "$SETTINGS" ]; then
-  cat > "$SETTINGS" <<ENDJSON
+  if [ "$MODE" = "2" ]; then
+    cat > "$SETTINGS" <<ENDJSON
 {
   "hooks": {
     "PermissionRequest": [
       {
         "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${HOOK_CMD}"
-          }
-        ]
+        "hooks": [{"type": "command", "command": "${HOOK_CMD}"}]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [{"type": "command", "command": "${HOOK_CMD}"}]
       }
     ]
   }
 }
 ENDJSON
+  else
+    cat > "$SETTINGS" <<ENDJSON
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [{"type": "command", "command": "${HOOK_CMD}"}]
+      }
+    ]
+  }
+}
+ENDJSON
+  fi
   ok "Created ${SETTINGS}"
 else
   # Backup settings.json before modifying
@@ -158,7 +174,7 @@ else
   TMP=$(mktemp)
   trap 'rm -f "${TMP:-}"' EXIT
 
-  if ! jq --arg cmd "$HOOK_CMD" '
+  if ! jq --arg cmd "$HOOK_CMD" --arg mode "$MODE" '
     .hooks //= {} |
     .hooks.PermissionRequest //= [] |
     .hooks.PermissionRequest = [
@@ -167,11 +183,20 @@ else
     ] |
     .hooks.PermissionRequest += [{
       "matcher": "ExitPlanMode",
-      "hooks": [{
-        "type": "command",
-        "command": $cmd
-      }]
+      "hooks": [{"type": "command", "command": $cmd}]
     }] |
+    .hooks.PostToolUse //= [] |
+    .hooks.PostToolUse = [
+      .hooks.PostToolUse[] |
+      select(.matcher != "ExitPlanMode")
+    ] |
+    ( if $mode == "2" then
+        .hooks.PostToolUse += [{
+          "matcher": "ExitPlanMode",
+          "hooks": [{"type": "command", "command": $cmd}]
+        }]
+      else . end ) |
+    ( if .hooks.PostToolUse == [] then del(.hooks.PostToolUse) else . end ) |
     if .hooks.Stop then
       .hooks.Stop = [
         .hooks.Stop[] |
