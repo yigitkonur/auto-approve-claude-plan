@@ -1,7 +1,7 @@
 auto-approves Claude Code's "ready to code?" plan dialog so you stop clicking a button 50 times a day. orchestrator mode injects a directive that makes Claude execute with precision and delegate complex tasks via subagents. pure bash, no dependencies beyond `jq`.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/hooks-claude-code/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/install.sh)
 ```
 
 [![bash](https://img.shields.io/badge/bash-pure_shell-93450a.svg?style=flat-square)](https://www.gnu.org/software/bash/)
@@ -38,13 +38,13 @@ this is particularly useful if you use Claude Code with background agents, teams
 ## install
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/hooks-claude-code/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/install.sh)
 ```
 
 or clone first:
 
 ```bash
-git clone https://github.com/yigitkonur/hooks-claude-code.git /tmp/claude-plan-hook \
+git clone https://github.com/yigitkonur/auto-approve-claude-plan.git /tmp/claude-plan-hook \
   && bash /tmp/claude-plan-hook/install.sh \
   && rm -rf /tmp/claude-plan-hook
 ```
@@ -72,7 +72,7 @@ the installer merges into `settings.json` without destroying existing hooks or s
 ## project structure
 
 ```
-hooks-claude-code/
+auto-approve-claude-plan/
   install.sh                        — interactive installer
   uninstall.sh                      — uninstaller
   hooks/
@@ -83,7 +83,7 @@ hooks-claude-code/
 ## uninstall
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/hooks-claude-code/main/uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/uninstall.sh)
 ```
 
 or manually:

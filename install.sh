@@ -11,7 +11,7 @@ SETTINGS="$HOME/.claude/settings.json"
 HOOK_SCRIPT="$HOOK_DIR/claude-plan-hook.sh"
 BACKUP_DIR="$HOOK_DIR/.backups"
 
-REPO_RAW="https://raw.githubusercontent.com/yigitkonur/hooks-claude-code/main"
+REPO_RAW="https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main"
 
 # ── Colors ───────────────────────────────────────────────────────────
 if [ -t 1 ]; then
