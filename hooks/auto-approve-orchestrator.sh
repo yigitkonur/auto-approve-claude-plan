@@ -5,6 +5,11 @@
 # ║  Auto-approves the plan AND injects an orchestrator directive   ║
 # ║  that guides Claude to execute with precision, delegate via     ║
 # ║  subagents for complex tasks, and enforce strict completion.    ║
+# ║                                                                  ║
+# ║  Also emits setMode="dontAsk" so the post-exit landing mode is   ║
+# ║  "dontAsk" instead of the hardcoded "acceptEdits" fallback.      ║
+# ║  setMode values: default|acceptEdits|dontAsk|plan (undocumented).║
+# ║  bypassPermissions is NOT selectable from a hook.                ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 cat > /dev/null
@@ -15,6 +20,7 @@ cat <<'EOF'
     "hookEventName": "PermissionRequest",
     "decision": {
       "behavior": "allow",
+      "setMode": "dontAsk",
       "message": "Plan auto-approved — orchestrator mode active"
     }
   },
