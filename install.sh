@@ -176,20 +176,28 @@ else
 
   if ! jq --arg cmd "$HOOK_CMD" --arg mode "$MODE" '
     .hooks //= {} |
+    # PermissionRequest: drop any existing entry that points at our hook
+    # (whether matched by ExitPlanMode or by command path), then re-add.
     .hooks.PermissionRequest //= [] |
     .hooks.PermissionRequest = [
       .hooks.PermissionRequest[] |
-      select(.matcher != "ExitPlanMode")
+      .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook"; "i") | not)] |
+      select((.hooks // []) | length > 0)
     ] |
     .hooks.PermissionRequest += [{
       "matcher": "ExitPlanMode",
       "hooks": [{"type": "command", "command": $cmd}]
     }] |
+    # PostToolUse: always scrub any existing entry that points at our hook,
+    # by command path (not just matcher) so an old orchestrator install is
+    # fully removed when reinstalling in Classic mode.
     .hooks.PostToolUse //= [] |
     .hooks.PostToolUse = [
       .hooks.PostToolUse[] |
-      select(.matcher != "ExitPlanMode")
+      .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook"; "i") | not)] |
+      select((.hooks // []) | length > 0)
     ] |
+    # Only Orchestrator (mode 2) re-adds the PostToolUse entry.
     ( if $mode == "2" then
         .hooks.PostToolUse += [{
           "matcher": "ExitPlanMode",
