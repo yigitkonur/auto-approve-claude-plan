@@ -12,7 +12,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-clau
 
 ## the problem
 
-Claude Code has a plan mode. when Claude finishes writing a plan and calls `ExitPlanMode`, it fires a `PermissionRequest` event and waits for you to click approve. every single time. this hooks into that event and returns `{"behavior":"allow"}` immediately.
+Claude Code has a plan mode. when Claude finishes writing a plan and calls `ExitPlanMode`, it fires a `PermissionRequest` event and waits for you to click approve. every single time. this hooks into that event and returns `{"behavior":"allow"}` immediately — and also asks Claude Code to land the session in `bypassPermissions` so subsequent tool calls don't prompt either.
 
 ## two modes
 
@@ -92,6 +92,27 @@ or manually:
 rm ~/.claude/hooks/claude-plan-hook.sh
 # then remove the ExitPlanMode entry from ~/.claude/settings.json
 ```
+
+## landing in bypassPermissions
+
+both hooks emit the documented `updatedPermissions` payload requesting `mode: "bypassPermissions"` for the session, so you don't have to re-approve every subsequent tool call after the plan is accepted.
+
+for that mode switch to actually land, the session has to be bypass-eligible. easiest path: launch Claude with `claude --permission-mode bypassPermissions`, or set this in `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  }
+}
+```
+
+and make sure `permissions.disableBypassPermissionsMode` is not set anywhere.
+
+### known upstream issues
+
+- [anthropics/claude-code#49525](https://github.com/anthropics/claude-code/issues/49525) — on Claude Code `2.1.110+`, the `bypassPermissions` value is silently dropped from hook responses. the documented schema is correct; Anthropic's parser ignores that one specific value. on affected versions the session falls through to `acceptEdits` (per #39973 below). self-fixing once the upstream patch ships — no change needed on this side.
+- [anthropics/claude-code#39973](https://github.com/anthropics/claude-code/issues/39973) — `ExitPlanMode` resets the permission mode to `acceptEdits` regardless of the prior session mode, masking the hook's request on affected versions.
 
 ## compatibility note
 
