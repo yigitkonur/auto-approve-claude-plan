@@ -5,16 +5,26 @@
 # ║  Wired to TWO hook events (registered by install.sh):            ║
 # ║                                                                  ║
 # ║    PermissionRequest / ExitPlanMode                              ║
-# ║      → emits decision allow + setMode=dontAsk                    ║
-# ║        Skips the approval dialog. setMode is undocumented;       ║
-# ║        accepted values: default|acceptEdits|dontAsk|plan         ║
-# ║        (bypassPermissions is NOT selectable from a hook).        ║
+# ║      → emits decision allow + updatedPermissions requesting      ║
+# ║        bypassPermissions for the session (documented schema).    ║
 # ║                                                                  ║
 # ║    PostToolUse / ExitPlanMode                                    ║
 # ║      → emits hookSpecificOutput.additionalContext (nested)       ║
 # ║        with the orchestrator directive. PostToolUse is the only  ║
 # ║        documented event after plan exit that injects text into   ║
 # ║        the model's next turn — PermissionRequest does NOT.       ║
+# ║                                                                  ║
+# ║  Schema source: code.claude.com/docs/en/hooks                    ║
+# ║                                                                  ║
+# ║  Known upstream issues:                                          ║
+# ║    - anthropics/claude-code#49525                                ║
+# ║      mode:"bypassPermissions" is silently dropped on CC 2.1.110+ ║
+# ║    - anthropics/claude-code#39973                                ║
+# ║      ExitPlanMode resets the mode to acceptEdits.                ║
+# ║                                                                  ║
+# ║  Prerequisite for bypass to land: launch with                    ║
+# ║  `claude --permission-mode bypassPermissions` or set             ║
+# ║  permissions.defaultMode = "bypassPermissions" in settings.json. ║
 # ║                                                                  ║
 # ║  The script reads stdin, parses .hook_event_name with jq, and    ║
 # ║  branches accordingly. Unknown events → silent no-op.            ║
@@ -33,7 +43,9 @@ case "$event" in
     "hookEventName": "PermissionRequest",
     "decision": {
       "behavior": "allow",
-      "setMode": "dontAsk",
+      "updatedPermissions": [
+        {"type": "setMode", "mode": "bypassPermissions", "destination": "session"}
+      ],
       "message": "Plan auto-approved — orchestrator mode active"
     }
   }

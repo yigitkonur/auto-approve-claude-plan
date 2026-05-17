@@ -1,17 +1,28 @@
 #!/bin/bash
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║  claude-plan-hook: Classic — Auto-Approve + setMode              ║
+# ║  claude-plan-hook: Classic — Auto-Approve + bypassPermissions   ║
 # ║                                                                  ║
 # ║  Returns "allow" so Claude proceeds without the approval dialog. ║
-# ║  Also emits setMode="dontAsk" so the post-exit landing mode is   ║
-# ║  "dontAsk" instead of the hardcoded "acceptEdits" fallback.      ║
+# ║  Also emits the documented updatedPermissions payload so the     ║
+# ║  session lands in bypassPermissions after ExitPlanMode instead   ║
+# ║  of falling back to acceptEdits.                                 ║
 # ║                                                                  ║
-# ║  setMode is undocumented; accepted values per Issue #45284:      ║
-# ║    default | acceptEdits | dontAsk | plan                        ║
-# ║  bypassPermissions is NOT selectable from a hook.                ║
-# ║  On Claude Code v2.1.118+, the prior session mode is restored    ║
-# ║  after ExitPlanMode and may override setMode — that is fine, the ║
-# ║  allow decision is what skips the dialog regardless.             ║
+# ║  Schema source: code.claude.com/docs/en/hooks                    ║
+# ║                                                                  ║
+# ║  Known upstream issues:                                          ║
+# ║    - anthropics/claude-code#49525                                ║
+# ║      mode:"bypassPermissions" is silently dropped on CC 2.1.110+ ║
+# ║      Other modes (default|acceptEdits|dontAsk|plan) still apply. ║
+# ║      Self-fixing once Anthropic ships the patch.                 ║
+# ║    - anthropics/claude-code#39973                                ║
+# ║      ExitPlanMode resets the mode to acceptEdits regardless of   ║
+# ║      the prior session mode.                                     ║
+# ║                                                                  ║
+# ║  Prerequisite for bypass to land: the session must be bypass-    ║
+# ║  eligible — launch with `claude --permission-mode               ║
+# ║  bypassPermissions` or set `permissions.defaultMode` to          ║
+# ║  "bypassPermissions" in ~/.claude/settings.json, and ensure      ║
+# ║  `permissions.disableBypassPermissionsMode` is not set.          ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 cat > /dev/null
@@ -22,8 +33,10 @@ cat <<'EOF'
     "hookEventName": "PermissionRequest",
     "decision": {
       "behavior": "allow",
-      "setMode": "dontAsk",
-      "message": "Plan auto-approved; mode set to dontAsk"
+      "updatedPermissions": [
+        {"type": "setMode", "mode": "bypassPermissions", "destination": "session"}
+      ],
+      "message": "Plan auto-approved; requested bypassPermissions"
     }
   }
 }
