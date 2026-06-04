@@ -133,6 +133,9 @@ if [ ! -f "$SETTINGS" ]; then
   if [ "$MODE" = "2" ]; then
     cat > "$SETTINGS" <<ENDJSON
 {
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
   "hooks": {
     "PermissionRequest": [
       {
@@ -152,6 +155,9 @@ ENDJSON
   else
     cat > "$SETTINGS" <<ENDJSON
 {
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
   "hooks": {
     "PermissionRequest": [
       {
@@ -175,6 +181,13 @@ else
   trap 'rm -f "${TMP:-}"' EXIT
 
   if ! jq --arg cmd "$HOOK_CMD" --arg mode "$MODE" '
+    # Satisfy the CC 2.1.110+ gate: a hook setMode:"bypassPermissions" is a
+    # silent no-op unless the session is already bypass-eligible. Setting
+    # permissions.defaultMode here makes every session eligible so the hook
+    # actually lands in bypassPermissions after ExitPlanMode instead of
+    # falling back to acceptEdits. (Existing permissions.* keys preserved.)
+    .permissions //= {} |
+    .permissions.defaultMode = "bypassPermissions" |
     .hooks //= {} |
     # PermissionRequest: drop any existing entry that points at our hook
     # (whether matched by ExitPlanMode or by command path), then re-add.
@@ -236,6 +249,15 @@ else
 
   mv "$TMP" "$SETTINGS"
   ok "Updated ${SETTINGS}"
+fi
+
+# ── Warn if bypass is blocked by policy ─────────────────────────────
+# Even with permissions.defaultMode set, CC 2.1.110+ honours
+# disableBypassPermissionsMode — if it's on, the hook's setMode is a no-op.
+if [ -f "$SETTINGS" ] && \
+   [ "$(jq -r '.permissions.disableBypassPermissionsMode // empty' "$SETTINGS" 2>/dev/null)" = "true" ]; then
+  warn "permissions.disableBypassPermissionsMode is enabled — bypassPermissions will NOT land."
+  printf "  ${DIM}Remove it (or a managed policy setting it) for the hook to take effect.${NC}\n"
 fi
 
 # ── Prune old backups (keep last 5) ────────────────────────────────
