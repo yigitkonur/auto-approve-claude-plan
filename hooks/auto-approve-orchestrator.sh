@@ -16,15 +16,16 @@
 # ║                                                                  ║
 # ║  Schema source: code.claude.com/docs/en/hooks                    ║
 # ║                                                                  ║
-# ║  Known upstream issues:                                          ║
-# ║    - anthropics/claude-code#49525                                ║
-# ║      mode:"bypassPermissions" is silently dropped on CC 2.1.110+ ║
-# ║    - anthropics/claude-code#39973                                ║
-# ║      ExitPlanMode resets the mode to acceptEdits.                ║
+# ║  THE GATE (CC 2.1.110+): a hook setMode:"bypassPermissions" is   ║
+# ║  a silent no-op unless the session was launched bypass-eligible  ║
+# ║  (#49525, closed not-planned — documented behaviour, not a bug   ║
+# ║  that self-fixes). The "bypassPermissions" value itself is       ║
+# ║  current/unchanged.                                              ║
 # ║                                                                  ║
-# ║  Prerequisite for bypass to land: launch with                    ║
-# ║  `claude --permission-mode bypassPermissions` or set             ║
-# ║  permissions.defaultMode = "bypassPermissions" in settings.json. ║
+# ║  Prerequisite (set by install.sh): permissions.defaultMode =     ║
+# ║  "bypassPermissions" in settings.json (or launch with            ║
+# ║  `claude --permission-mode bypassPermissions`), and ensure       ║
+# ║  permissions.disableBypassPermissionsMode is NOT set.            ║
 # ║                                                                  ║
 # ║  The script reads stdin, parses .hook_event_name with jq, and    ║
 # ║  branches accordingly. Unknown events → silent no-op.            ║

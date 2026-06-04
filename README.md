@@ -97,7 +97,9 @@ rm ~/.claude/hooks/claude-plan-hook.sh
 
 both hooks emit the documented `updatedPermissions` payload requesting `mode: "bypassPermissions"` for the session, so you don't have to re-approve every subsequent tool call after the plan is accepted.
 
-for that mode switch to actually land, the session has to be bypass-eligible. easiest path: launch Claude with `claude --permission-mode bypassPermissions`, or set this in `~/.claude/settings.json`:
+**the gate (CC `2.1.110+`):** a hook's `setMode: "bypassPermissions"` is a silent no-op *unless the session was launched bypass-eligible* — otherwise it falls through to `acceptEdits`. the `bypassPermissions` value itself is current and correct (verified against the live docs, 2026-06); valid modes are `default | auto | acceptEdits | dontAsk | bypassPermissions | plan`. this gating is documented, intentional behaviour, so it does **not** self-fix.
+
+to satisfy the gate, the installer now writes this to your `settings.json` for you:
 
 ```json
 {
@@ -107,12 +109,12 @@ for that mode switch to actually land, the session has to be bypass-eligible. ea
 }
 ```
 
-and make sure `permissions.disableBypassPermissionsMode` is not set anywhere.
+(launching with `claude --permission-mode bypassPermissions` / `--dangerously-skip-permissions` also satisfies it.) make sure `permissions.disableBypassPermissionsMode` is **not** set anywhere — it gates bypass off even when `defaultMode` is set.
 
 ### known upstream issues
 
-- [anthropics/claude-code#49525](https://github.com/anthropics/claude-code/issues/49525) — on Claude Code `2.1.110+`, the `bypassPermissions` value is silently dropped from hook responses. the documented schema is correct; Anthropic's parser ignores that one specific value. on affected versions the session falls through to `acceptEdits` (per #39973 below). self-fixing once the upstream patch ships — no change needed on this side.
-- [anthropics/claude-code#39973](https://github.com/anthropics/claude-code/issues/39973) — `ExitPlanMode` resets the permission mode to `acceptEdits` regardless of the prior session mode, masking the hook's request on affected versions.
+- [anthropics/claude-code#49525](https://github.com/anthropics/claude-code/issues/49525) — **closed as not-planned.** on `2.1.110+`, `setMode: "bypassPermissions"` from a hook is a no-op unless the session is already bypass-eligible (the gate above). the schema and the value are both correct; this is intentional gating, not a parser bug, and it won't self-fix — the `defaultMode` prerequisite is the fix.
+- [anthropics/claude-code#39973](https://github.com/anthropics/claude-code/issues/39973) — `ExitPlanMode` reset the permission mode to `acceptEdits` regardless of the prior session mode; the plan-accept side was addressed in `2.1.118` (#49829). with the gate satisfied, the hook's `setMode` re-applies bypass after plan exit.
 
 ## compatibility note
 

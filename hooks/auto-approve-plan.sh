@@ -9,20 +9,24 @@
 # ║                                                                  ║
 # ║  Schema source: code.claude.com/docs/en/hooks                    ║
 # ║                                                                  ║
-# ║  Known upstream issues:                                          ║
-# ║    - anthropics/claude-code#49525                                ║
-# ║      mode:"bypassPermissions" is silently dropped on CC 2.1.110+ ║
-# ║      Other modes (default|acceptEdits|dontAsk|plan) still apply. ║
-# ║      Self-fixing once Anthropic ships the patch.                 ║
-# ║    - anthropics/claude-code#39973                                ║
-# ║      ExitPlanMode resets the mode to acceptEdits regardless of   ║
-# ║      the prior session mode.                                     ║
+# ║  The "bypassPermissions" mode value is current and unchanged     ║
+# ║  (verified against the live docs, 2026-06): valid setMode modes  ║
+# ║  are default|auto|acceptEdits|dontAsk|bypassPermissions|plan.     ║
 # ║                                                                  ║
-# ║  Prerequisite for bypass to land: the session must be bypass-    ║
-# ║  eligible — launch with `claude --permission-mode               ║
-# ║  bypassPermissions` or set `permissions.defaultMode` to          ║
-# ║  "bypassPermissions" in ~/.claude/settings.json, and ensure      ║
-# ║  `permissions.disableBypassPermissionsMode` is not set.          ║
+# ║  THE GATE (CC 2.1.110+): a hook setMode:"bypassPermissions" is   ║
+# ║  a silent no-op UNLESS the session was launched bypass-eligible. ║
+# ║  Otherwise it falls back to acceptEdits. This is documented,     ║
+# ║  intentional behaviour — anthropics/claude-code#49525 was closed ║
+# ║  as not-planned, so it does NOT self-fix. Other modes apply      ║
+# ║  unconditionally; only bypassPermissions is gated.               ║
+# ║                                                                  ║
+# ║  Prerequisite (the actual fix — set by install.sh): make the     ║
+# ║  session bypass-eligible via permissions.defaultMode =           ║
+# ║  "bypassPermissions" in settings.json, or launch with            ║
+# ║  `claude --permission-mode bypassPermissions` /                  ║
+# ║  `--dangerously-skip-permissions`, and ensure                    ║
+# ║  permissions.disableBypassPermissionsMode is NOT set (it gates   ║
+# ║  bypass off even when defaultMode is set).                       ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 cat > /dev/null
