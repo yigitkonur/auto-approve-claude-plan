@@ -3,15 +3,20 @@ set -euo pipefail
 
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  claude-plan-hook installer                                     ║
-# ║  Auto-approve Claude Code plans — classic or orchestrator mode ║
+# ║  Auto-approve Claude Code plans — Classic or Deep Plan mode    ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 HOOK_DIR="$HOME/.claude/hooks"
 SETTINGS="$HOME/.claude/settings.json"
 HOOK_SCRIPT="$HOOK_DIR/claude-plan-hook.sh"
+DEEPEN_SCRIPT="$HOOK_DIR/plan-deepen.sh"
 BACKUP_DIR="$HOOK_DIR/.backups"
 
 REPO_RAW="https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main"
+
+# Marker that brackets the shell-rc alias block (used for idempotent add/remove)
+ALIAS_MARK_BEGIN="# >>> claude-plan-hook effort tiers >>>"
+ALIAS_MARK_END="# <<< claude-plan-hook effort tiers <<<"
 
 # ── Colors ───────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -61,10 +66,12 @@ fi
 
 # ── Detect & clean existing install ──────────────────────────────────
 if [ -f "$HOOK_SCRIPT" ]; then
-  if grep -q "Orchestrator" "$HOOK_SCRIPT" 2>/dev/null; then
-    warn "Already installed: Orchestrator mode"
+  if grep -q "Deep Plan" "$HOOK_SCRIPT" 2>/dev/null; then
+    warn "Already installed: Deep Plan mode"
   elif grep -q "Classic" "$HOOK_SCRIPT" 2>/dev/null; then
     warn "Already installed: Classic mode"
+  elif grep -q "Orchestrator" "$HOOK_SCRIPT" 2>/dev/null; then
+    warn "Found legacy Orchestrator install — it will be replaced."
   else
     warn "Already installed: unrecognized version"
   fi
@@ -81,12 +88,18 @@ fi
 
 # ── Mode selection ───────────────────────────────────────────────────
 printf "${BOLD}Choose a mode:${NC}\n\n"
-printf "  ${BOLD}1${NC}  Classic\n"
-printf "     ${DIM}Auto-approve plans instantly. Simple and silent.${NC}\n\n"
-printf "  ${BOLD}2${NC}  Orchestrator ${DIM}(recommended)${NC}\n"
-printf "     ${DIM}Auto-approve + inject a directive that makes Claude execute${NC}\n"
-printf "     ${DIM}plans with precision, spawn subagents for complex tasks,${NC}\n"
-printf "     ${DIM}and enforce strict BSV completion criteria.${NC}\n\n"
+printf "  ${BOLD}1${NC}  Classic ${DIM}— default bypass${NC}\n"
+printf "     ${DIM}Auto-approve plans instantly and land the session in${NC}\n"
+printf "     ${DIM}bypassPermissions. Simple and silent. Nothing else touched.${NC}\n\n"
+printf "  ${BOLD}2${NC}  Deep Plan ${DIM}(recommended)${NC}\n"
+printf "     ${DIM}Everything in Classic, PLUS: while you are IN plan mode, a${NC}\n"
+printf "     ${DIM}UserPromptSubmit hook injects deep-reasoning guidance so${NC}\n"
+printf "     ${DIM}planning runs deliberately; it auto-stops once you leave${NC}\n"
+printf "     ${DIM}plan mode. Sets effortLevel=low as the cheap normal-mode${NC}\n"
+printf "     ${DIM}baseline and adds 'claude-plan' / 'claude-fast' shell aliases.${NC}\n"
+printf "     ${DIM}Note: the in-plan boost is a PROMPT nudge, not the real${NC}\n"
+printf "     ${DIM}effort knob (hooks cannot set effort). 'claude-plan' is the${NC}\n"
+printf "     ${DIM}real max-effort launch. See the README for the why.${NC}\n\n"
 
 while true; do
   printf "${CYAN}>${NC} Enter mode [1/2]: "
@@ -98,36 +111,45 @@ while true; do
 done
 printf "\n"
 
-# ── Install hook script ─────────────────────────────────────────────
+# ── Install hook script(s) ──────────────────────────────────────────
 mkdir -p "$HOOK_DIR"
 
-case "$MODE" in
-  1) HOOK_SRC="hooks/auto-approve-plan.sh" ;;
-  2) HOOK_SRC="hooks/auto-approve-orchestrator.sh" ;;
-esac
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
-if [ -f "${SCRIPT_DIR}/install.sh" ] && [ -f "${SCRIPT_DIR}/${HOOK_SRC}" ]; then
-  cp -f "${SCRIPT_DIR}/${HOOK_SRC}" "$HOOK_SCRIPT"
-else
-  info "Downloading hook script from GitHub..."
-  if ! curl -fsSL "${REPO_RAW}/${HOOK_SRC}" -o "$HOOK_SCRIPT"; then
-    err "Failed to download hook script."
+
+# Helper: place a repo file at a destination, from local checkout or GitHub.
+place_file() {
+  local src_rel="$1" dest="$2"
+  if [ -f "${SCRIPT_DIR}/${src_rel}" ]; then
+    cp -f "${SCRIPT_DIR}/${src_rel}" "$dest"
+  else
+    info "Downloading ${src_rel} from GitHub..."
+    if ! curl -fsSL "${REPO_RAW}/${src_rel}" -o "$dest"; then
+      err "Failed to download ${src_rel}."
+      exit 1
+    fi
+  fi
+  if [ ! -s "$dest" ]; then
+    err "${dest} is empty — download may have failed."
     exit 1
   fi
-fi
+  chmod +x "$dest"
+}
 
-# Validate the hook script is not empty / truncated
-if [ ! -s "$HOOK_SCRIPT" ]; then
-  err "Hook script is empty — download may have failed."
-  exit 1
-fi
-
-chmod +x "$HOOK_SCRIPT"
+# The auto-approve hook is identical in both modes.
+place_file "hooks/auto-approve-plan.sh" "$HOOK_SCRIPT"
 ok "Hook script installed to ${HOOK_SCRIPT}"
+
+if [ "$MODE" = "2" ]; then
+  place_file "hooks/plan-deepen.sh" "$DEEPEN_SCRIPT"
+  ok "Deep Plan hook installed to ${DEEPEN_SCRIPT}"
+else
+  # Classic: remove any Deep Plan hook left over from a prior install.
+  rm -f "$DEEPEN_SCRIPT"
+fi
 
 # ── Update settings.json ────────────────────────────────────────────
 HOOK_CMD="~/.claude/hooks/claude-plan-hook.sh"
+DEEPEN_CMD="~/.claude/hooks/plan-deepen.sh"
 
 if [ ! -f "$SETTINGS" ]; then
   if [ "$MODE" = "2" ]; then
@@ -136,6 +158,7 @@ if [ ! -f "$SETTINGS" ]; then
   "permissions": {
     "defaultMode": "bypassPermissions"
   },
+  "effortLevel": "low",
   "hooks": {
     "PermissionRequest": [
       {
@@ -143,10 +166,9 @@ if [ ! -f "$SETTINGS" ]; then
         "hooks": [{"type": "command", "command": "${HOOK_CMD}"}]
       }
     ],
-    "PostToolUse": [
+    "UserPromptSubmit": [
       {
-        "matcher": "ExitPlanMode",
-        "hooks": [{"type": "command", "command": "${HOOK_CMD}"}]
+        "hooks": [{"type": "command", "command": "${DEEPEN_CMD}"}]
       }
     ]
   }
@@ -180,17 +202,26 @@ else
   TMP=$(mktemp)
   trap 'rm -f "${TMP:-}"' EXIT
 
-  if ! jq --arg cmd "$HOOK_CMD" --arg mode "$MODE" '
-    # Satisfy the CC 2.1.110+ gate: a hook setMode:"bypassPermissions" is a
-    # silent no-op unless the session is already bypass-eligible. Setting
-    # permissions.defaultMode here makes every session eligible so the hook
-    # actually lands in bypassPermissions after ExitPlanMode instead of
-    # falling back to acceptEdits. (Existing permissions.* keys preserved.)
+  if ! jq --arg cmd "$HOOK_CMD" --arg deepen "$DEEPEN_CMD" --arg mode "$MODE" '
+    # ── Satisfy the CC 2.1.110+ gate ──────────────────────────────────
+    # A hook setMode:"bypassPermissions" is a silent no-op unless the
+    # session is already bypass-eligible. Setting permissions.defaultMode
+    # makes every session eligible so the hook actually lands bypass after
+    # ExitPlanMode instead of falling back to acceptEdits. (Existing
+    # permissions.* keys preserved.)
     .permissions //= {} |
     .permissions.defaultMode = "bypassPermissions" |
+
+    # ── effortLevel baseline (Deep Plan only) ─────────────────────────
+    # Deep Plan needs a cheap normal-mode floor so the in-plan boost has
+    # contrast. We set "low" only when effortLevel is unset, so we never
+    # clobber an explicit user choice.
+    ( if $mode == "2" and (.effortLevel == null) then .effortLevel = "low" else . end ) |
+
     .hooks //= {} |
-    # PermissionRequest: drop any existing entry that points at our hook
-    # (whether matched by ExitPlanMode or by command path), then re-add.
+
+    # ── PermissionRequest / ExitPlanMode: re-register our auto-approve ─
+    # Drop any prior entry pointing at our hooks, then re-add cleanly.
     .hooks.PermissionRequest //= [] |
     .hooks.PermissionRequest = [
       .hooks.PermissionRequest[] |
@@ -201,27 +232,40 @@ else
       "matcher": "ExitPlanMode",
       "hooks": [{"type": "command", "command": $cmd}]
     }] |
-    # PostToolUse: always scrub any existing entry that points at our hook,
-    # by command path (not just matcher) so an old orchestrator install is
-    # fully removed when reinstalling in Classic mode.
+
+    # ── PostToolUse: scrub legacy Orchestrator entries entirely ────────
+    # The old Orchestrator mode injected on PostToolUse/ExitPlanMode. That
+    # mode is removed; strip any entry that points at our hooks.
     .hooks.PostToolUse //= [] |
     .hooks.PostToolUse = [
       .hooks.PostToolUse[] |
       .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook"; "i") | not)] |
       select((.hooks // []) | length > 0)
     ] |
-    # Only Orchestrator (mode 2) re-adds the PostToolUse entry.
+    ( if .hooks.PostToolUse == [] then del(.hooks.PostToolUse) else . end ) |
+
+    # ── UserPromptSubmit / plan-deepen ────────────────────────────────
+    # Always scrub our prior plan-deepen entry first (idempotent), keeping
+    # any unrelated UserPromptSubmit hooks (e.g. status-line integrations).
+    .hooks.UserPromptSubmit //= [] |
+    .hooks.UserPromptSubmit = [
+      .hooks.UserPromptSubmit[] |
+      .hooks = [(.hooks // [])[] | select((.command // "") | test("plan-deepen"; "i") | not)] |
+      select((.hooks // []) | length > 0)
+    ] |
+    # Only Deep Plan (mode 2) re-adds the plan-deepen entry.
     ( if $mode == "2" then
-        .hooks.PostToolUse += [{
-          "matcher": "ExitPlanMode",
-          "hooks": [{"type": "command", "command": $cmd}]
+        .hooks.UserPromptSubmit += [{
+          "hooks": [{"type": "command", "command": $deepen}]
         }]
       else . end ) |
-    ( if .hooks.PostToolUse == [] then del(.hooks.PostToolUse) else . end ) |
+    ( if .hooks.UserPromptSubmit == [] then del(.hooks.UserPromptSubmit) else . end ) |
+
+    # ── Legacy Stop cleanup (older revisions wired Stop) ──────────────
     if .hooks.Stop then
       .hooks.Stop = [
         .hooks.Stop[] |
-        .hooks = [(.hooks // [])[] | select(.command | test("auto-approve|claude-plan-hook"; "i") | not)]
+        .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook|plan-deepen"; "i") | not)]
       ] |
       .hooks.Stop = [.hooks.Stop[] | select((.hooks // []) | length > 0)]
     else . end |
@@ -251,6 +295,51 @@ else
   ok "Updated ${SETTINGS}"
 fi
 
+# ── Shell aliases (Deep Plan only) ──────────────────────────────────
+# claude-plan = launch whole session at MAX effort (the real knob; also
+#   dodges the settings.json effortLevel:"max" downgrade bug #43322).
+# claude-fast = force LOW effort regardless of settings.
+RC_FILE=""
+case "${SHELL:-}" in
+  *zsh*)  RC_FILE="$HOME/.zshrc" ;;
+  *bash*) RC_FILE="$HOME/.bashrc" ;;
+  *)      RC_FILE="${HOME}/.profile" ;;
+esac
+
+if [ "$MODE" = "2" ]; then
+  if [ -n "$RC_FILE" ]; then
+    # Remove any prior block first (idempotent), then append a fresh one.
+    if [ -f "$RC_FILE" ] && grep -qF "$ALIAS_MARK_BEGIN" "$RC_FILE" 2>/dev/null; then
+      TMP_RC=$(mktemp)
+      awk -v b="$ALIAS_MARK_BEGIN" -v e="$ALIAS_MARK_END" '
+        $0==b {skip=1} skip && $0==e {skip=0; next} !skip {print}
+      ' "$RC_FILE" > "$TMP_RC" && mv "$TMP_RC" "$RC_FILE"
+    fi
+    {
+      printf '\n%s\n' "$ALIAS_MARK_BEGIN"
+      printf '# Effort is locked at launch; settings.json default is "low" (normal mode stays cheap).\n'
+      printf '# In-plan deepening is handled by ~/.claude/hooks/plan-deepen.sh (a prompt nudge).\n'
+      printf '#   claude-plan : launch entire session at MAX effort (real knob; dodges bug #43322)\n'
+      printf '#   claude-fast : force LOW effort regardless of settings\n'
+      printf "alias claude-plan='CLAUDE_CODE_EFFORT_LEVEL=max claude'\n"
+      printf "alias claude-fast='CLAUDE_CODE_EFFORT_LEVEL=low claude'\n"
+      printf '%s\n' "$ALIAS_MARK_END"
+    } >> "$RC_FILE"
+    ok "Added claude-plan / claude-fast aliases to ${RC_FILE}"
+  else
+    warn "Could not determine a shell rc file — add the aliases manually (see README)."
+  fi
+else
+  # Classic: remove the alias block if a prior Deep Plan install left one.
+  if [ -n "$RC_FILE" ] && [ -f "$RC_FILE" ] && grep -qF "$ALIAS_MARK_BEGIN" "$RC_FILE" 2>/dev/null; then
+    TMP_RC=$(mktemp)
+    awk -v b="$ALIAS_MARK_BEGIN" -v e="$ALIAS_MARK_END" '
+      $0==b {skip=1} skip && $0==e {skip=0; next} !skip {print}
+    ' "$RC_FILE" > "$TMP_RC" && mv "$TMP_RC" "$RC_FILE"
+    info "Removed leftover effort-tier aliases from ${RC_FILE}"
+  fi
+fi
+
 # ── Warn if bypass is blocked by policy ─────────────────────────────
 # Even with permissions.defaultMode set, CC 2.1.110+ honours
 # disableBypassPermissionsMode — if it's on, the hook's setMode is a no-op.
@@ -274,18 +363,24 @@ printf "${GREEN}${BOLD}Installed!${NC}\n\n"
 case "$MODE" in
   1)
     printf "  Mode:   ${BOLD}Classic${NC}\n"
-    printf "  Effect: Plans are approved instantly. No bells, no whistles.\n"
+    printf "  Effect: Plans are approved instantly and the session lands in\n"
+    printf "          bypassPermissions. No bells, no whistles.\n"
     ;;
   2)
-    printf "  Mode:   ${BOLD}Orchestrator${NC}\n"
-    printf "  Effect: Plans are approved instantly. Claude receives a directive\n"
-    printf "          to execute step-by-step, delegate via subagents for complex\n"
-    printf "          tasks, and enforce 100%% completion with BSV criteria.\n"
+    printf "  Mode:   ${BOLD}Deep Plan${NC}\n"
+    printf "  Effect: Plans are approved instantly (bypassPermissions). While in\n"
+    printf "          plan mode, Claude is nudged to reason deeply; effortLevel is\n"
+    printf "          set to low for cheap normal-mode turns. Use ${BOLD}claude-plan${NC} to\n"
+    printf "          launch a session at true MAX effort.\n"
     ;;
 esac
 
 printf "\n"
 printf "  ${DIM}Restart Claude Code for changes to take effect.${NC}\n"
+if [ "$MODE" = "2" ]; then
+  printf "  ${DIM}Run 'source ${RC_FILE}' (or open a new shell) to load the aliases.${NC}\n"
+  printf "  ${DIM}The in-plan boost is a prompt nudge, not the effort knob — see README.${NC}\n"
+fi
 printf "  ${DIM}To switch modes, run the installer again.${NC}\n"
 printf "  ${DIM}To uninstall: curl -fsSL ${REPO_RAW}/uninstall.sh | bash${NC}\n"
 printf "\n"
