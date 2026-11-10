@@ -27,23 +27,27 @@
 # ║  `--dangerously-skip-permissions`, and ensure                    ║
 # ║  permissions.disableBypassPermissionsMode is NOT set (it gates   ║
 # ║  bypass off even when defaultMode is set).                       ║
+# ║                                                                  ║
+# ║  updatedInput (CC 2.1.3xx): an allow for a tool that needs user  ║
+# ║  interaction (ExitPlanMode) is ignored and the dialog still      ║
+# ║  shows unless the allow carries updatedInput. We echo the        ║
+# ║  tool_input back unchanged to satisfy that check.                ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
-cat > /dev/null
+INPUT=$(cat)
 
-cat <<'EOF'
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PermissionRequest",
-    "decision": {
-      "behavior": "allow",
-      "updatedPermissions": [
-        {"type": "setMode", "mode": "bypassPermissions", "destination": "session"}
+jq -c '{
+  hookSpecificOutput: {
+    hookEventName: "PermissionRequest",
+    decision: {
+      behavior: "allow",
+      updatedInput: .tool_input,
+      updatedPermissions: [
+        {type: "setMode", mode: "bypassPermissions", destination: "session"}
       ],
-      "message": "Plan auto-approved; requested bypassPermissions"
+      message: "Plan auto-approved; requested bypassPermissions"
     }
   }
-}
-EOF
+}' <<<"$INPUT"
 
 exit 0

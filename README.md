@@ -1,7 +1,7 @@
-auto-approves Claude Code's "ready to code?" plan dialog so you stop clicking a button 50 times a day. an optional **Deep Plan** mode also nudges Claude to reason harder *while you're in plan mode* and gives you effort-tier launch aliases. pure bash, no dependencies beyond `jq`.
+auto-approves Claude Code's "ready to code?" plan dialog so you stop clicking a button 50 times a day. an optional **Deep Plan** mode also nudges Claude to reason harder *while you're in plan mode* and gives you effort-tier launch aliases. pure bash; `jq` is installed for you if it's missing.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/install.sh)
+curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/install.sh | bash
 ```
 
 [![bash](https://img.shields.io/badge/bash-pure_shell-93450a.svg?style=flat-square)](https://www.gnu.org/software/bash/)
@@ -12,18 +12,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-clau
 
 ## the problem
 
-Claude Code has a plan mode. when Claude finishes writing a plan and calls `ExitPlanMode`, it fires a `PermissionRequest` event and waits for you to click approve. every single time. this hooks into that event and returns `{"behavior":"allow"}` immediately — and also asks Claude Code to land the session in `bypassPermissions` so subsequent tool calls don't prompt either.
+Claude Code has a plan mode. when Claude finishes writing a plan and calls `ExitPlanMode`, it fires a `PermissionRequest` event and waits for you to click approve. every single time. this hooks into that event and returns `{"behavior":"allow"}` immediately (with the plan echoed back as `updatedInput`, which current Claude Code requires — see below) — and also asks Claude Code to land the session in `bypassPermissions` so subsequent tool calls don't prompt either.
 
 ## two modes
 
-the installer asks you to pick one:
+Classic is the default; pass `--deep` for Deep Plan:
 
 | mode | what it does |
 |:---|:---|
 | **1 — Classic** *(default bypass)* | approves every plan instantly and lands the session in `bypassPermissions`. nothing else is touched. install and forget |
 | **2 — Deep Plan** *(recommended)* | everything in Classic, **plus** a prompt-level boost: while you are *in* plan mode every prompt is nudged to reason deeply (auto-reverts when you leave plan mode), `effortLevel` is set to `low` as a cheap normal-mode baseline, and two launch aliases (`claude-plan` / `claude-fast`) are added to your shell |
-
-> The old **Orchestrator** mode has been removed. Re-running the installer over an existing Orchestrator install cleans up its `PostToolUse` hook automatically.
 
 ### what Deep Plan actually does (and a candid scope note)
 
@@ -41,10 +39,11 @@ So the mental model is: **Classic** auto-approves; **Deep Plan** adds an automat
 ## install
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/install.sh)
+curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/install.sh | bash                 # Classic
+curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/install.sh | bash -s -- --deep    # Deep Plan
 ```
 
-or clone first:
+no prompts. or from a clone:
 
 ```bash
 git clone https://github.com/yigitkonur/auto-approve-claude-plan.git /tmp/claude-plan-hook \
@@ -52,7 +51,7 @@ git clone https://github.com/yigitkonur/auto-approve-claude-plan.git /tmp/claude
   && rm -rf /tmp/claude-plan-hook
 ```
 
-requires `jq` (`brew install jq` / `apt install jq`). installer is idempotent — re-run to switch modes.
+needs `jq`; the installer installs it with `brew`, `apt-get` or `dnf` if it's missing. the installer is idempotent — rerun with `--classic` or `--deep` to switch modes. `CLAUDE_PLAN_HOOK_MODE=2` works too, for scripted installs.
 
 after a **Deep Plan** install, run `source ~/.zshrc` (or open a new shell) to load the aliases, and restart Claude Code so it picks up the new hook.
 
@@ -61,8 +60,8 @@ after a **Deep Plan** install, run `source ~/.zshrc` (or open a new shell) to lo
 ### auto-approve (both modes)
 hooks into Claude Code's `PermissionRequest` event with matcher `ExitPlanMode`. the hook script:
 
-1. consumes stdin (required by hook protocol)
-2. prints the allow decision to stdout, including the `updatedPermissions` payload requesting `bypassPermissions`
+1. reads the request from stdin
+2. prints the allow decision to stdout: `updatedInput` (the tool input, unchanged) plus the `updatedPermissions` payload requesting `bypassPermissions`
 3. Claude Code reads stdout, skips the dialog, starts implementing
 
 ### in-plan deepening (Deep Plan only)
@@ -87,7 +86,7 @@ the installer merges into `settings.json` without destroying existing hooks or s
 
 ```
 auto-approve-claude-plan/
-  install.sh                  — interactive installer (Classic / Deep Plan)
+  install.sh                  — non-interactive installer (Classic default, --deep)
   uninstall.sh                — uninstaller (removes hooks, entries, aliases)
   hooks/
     auto-approve-plan.sh      — auto-approve + bypassPermissions (both modes)
@@ -97,7 +96,7 @@ auto-approve-claude-plan/
 ## uninstall
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/uninstall.sh)
+curl -fsSL https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main/uninstall.sh | bash
 ```
 
 removes both hook scripts, strips our hook entries from `settings.json` (preserving unrelated hooks), and removes the alias block from your shell rc. it intentionally leaves `permissions.defaultMode` and `effortLevel` alone, since those may be your own preferences.
@@ -121,6 +120,8 @@ to satisfy the gate, the installer writes this to your `settings.json` for you:
 (launching with `claude --permission-mode bypassPermissions` / `--dangerously-skip-permissions` also satisfies it.) make sure `permissions.disableBypassPermissionsMode` is **not** set anywhere — it gates bypass off even when `defaultMode` is set.
 
 ### known upstream issues
+
+- **allow needs `updatedInput` (CC `2.1.3xx`).** for tools that need user interaction, `ExitPlanMode` included, Claude Code now ignores a `PermissionRequest` allow that has no `updatedInput` and shows the plan dialog anyway. the hook still fires and logs `returned permissionDecision: allow`. the hook echoes `tool_input` back as `updatedInput`, which passes the check; the debug log then shows `modified tool input keys: [plan, planFilePath]` and the transcript shows "Allowed by PermissionRequest hook".
 
 - [anthropics/claude-code#49525](https://github.com/anthropics/claude-code/issues/49525) — **closed as not-planned.** on `2.1.110+`, `setMode: "bypassPermissions"` from a hook is a no-op unless the session is already bypass-eligible (the gate above). the schema and the value are both correct; this is intentional gating, not a parser bug, and it won't self-fix — the `defaultMode` prerequisite is the fix.
 - [anthropics/claude-code#39973](https://github.com/anthropics/claude-code/issues/39973) — `ExitPlanMode` reset the permission mode to `acceptEdits` regardless of the prior session mode; the plan-accept side was addressed in `2.1.118` (#49829). with the gate satisfied, the hook's `setMode` re-applies bypass after plan exit.

@@ -42,42 +42,18 @@ if [ -f "$DEEPEN_SCRIPT" ]; then
 fi
 
 # ── Strip hook entries from settings.json ───────────────────────────
-# Removes our PermissionRequest/ExitPlanMode auto-approve entry, our
-# UserPromptSubmit plan-deepen entry, and any legacy PostToolUse entry —
-# all matched by command path so unrelated hooks are preserved.
+# Drops every entry pointing at our hooks, in any event, matched by
+# command path so unrelated hooks are preserved.
 if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
   TMP=$(mktemp)
   trap 'rm -f "${TMP:-}"' EXIT
 
   if ! jq '
-    .hooks //= {} |
-    # PermissionRequest: drop entries pointing at our auto-approve hook.
-    ( if .hooks.PermissionRequest then
-        .hooks.PermissionRequest = [
-          .hooks.PermissionRequest[] |
-          .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook"; "i") | not)] |
-          select((.hooks // []) | length > 0)
-        ] |
-        ( if .hooks.PermissionRequest == [] then del(.hooks.PermissionRequest) else . end )
-      else . end ) |
-    # PostToolUse: drop legacy orchestrator entries.
-    ( if .hooks.PostToolUse then
-        .hooks.PostToolUse = [
-          .hooks.PostToolUse[] |
-          .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook"; "i") | not)] |
-          select((.hooks // []) | length > 0)
-        ] |
-        ( if .hooks.PostToolUse == [] then del(.hooks.PostToolUse) else . end )
-      else . end ) |
-    # UserPromptSubmit: drop our plan-deepen entry, keep others.
-    ( if .hooks.UserPromptSubmit then
-        .hooks.UserPromptSubmit = [
-          .hooks.UserPromptSubmit[] |
-          .hooks = [(.hooks // [])[] | select((.command // "") | test("plan-deepen"; "i") | not)] |
-          select((.hooks // []) | length > 0)
-        ] |
-        ( if .hooks.UserPromptSubmit == [] then del(.hooks.UserPromptSubmit) else . end )
-      else . end ) |
+    .hooks = ((.hooks // {}) | with_entries(
+      .value = [ .value[] |
+        .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook|plan-deepen"; "i") | not)] |
+        select(.hooks | length > 0) ]
+    ) | with_entries(select(.value | length > 0))) |
     ( if .hooks == {} then del(.hooks) else . end )
   ' "$SETTINGS" > "$TMP" 2>/dev/null; then
     warn "jq failed — settings.json not modified."

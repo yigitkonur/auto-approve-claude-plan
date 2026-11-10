@@ -4,6 +4,9 @@ set -euo pipefail
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  claude-plan-hook installer                                     ║
 # ║  Auto-approve Claude Code plans — Classic or Deep Plan mode    ║
+# ║                                                                  ║
+# ║  curl -fsSL <raw>/install.sh | bash              # Classic       ║
+# ║  curl -fsSL <raw>/install.sh | bash -s -- --deep # Deep Plan     ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 HOOK_DIR="$HOME/.claude/hooks"
@@ -13,6 +16,22 @@ DEEPEN_SCRIPT="$HOOK_DIR/plan-deepen.sh"
 BACKUP_DIR="$HOOK_DIR/.backups"
 
 REPO_RAW="https://raw.githubusercontent.com/yigitkonur/auto-approve-claude-plan/main"
+
+# ── Mode: 1 = Classic (default), 2 = Deep Plan. No prompts. ─────────
+MODE="${CLAUDE_PLAN_HOOK_MODE:-1}"
+for arg in "$@"; do
+  case "$arg" in
+    --classic) MODE=1 ;;
+    --deep)    MODE=2 ;;
+    -h|--help)
+      printf "usage: install.sh [--classic | --deep]\n"
+      printf "  --classic  auto-approve plans + land in bypassPermissions (default)\n"
+      printf "  --deep     Classic + in-plan reasoning nudge + claude-plan/claude-fast aliases\n"
+      exit 0 ;;
+    *) printf "unknown option: %s (try --help)\n" "$arg"; exit 1 ;;
+  esac
+done
+case "$MODE" in 1|2) ;; *) printf "CLAUDE_PLAN_HOOK_MODE must be 1 or 2\n"; exit 1 ;; esac
 
 # Marker that brackets the shell-rc alias block (used for idempotent add/remove)
 ALIAS_MARK_BEGIN="# >>> claude-plan-hook effort tiers >>>"
@@ -49,10 +68,22 @@ printf "\n"
 
 # ── Prerequisites ────────────────────────────────────────────────────
 if ! command -v jq &>/dev/null; then
-  err "jq is required but not installed."
-  printf "  ${DIM}brew install jq${NC}   # macOS\n"
-  printf "  ${DIM}sudo apt install jq${NC}   # Debian/Ubuntu\n"
-  exit 1
+  info "jq not found — installing it..."
+  if command -v brew &>/dev/null; then
+    brew install jq >/dev/null
+  elif command -v apt-get &>/dev/null; then
+    SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+    $SUDO apt-get install -y jq >/dev/null 2>&1 || { $SUDO apt-get update >/dev/null && $SUDO apt-get install -y jq >/dev/null; }
+  elif command -v dnf &>/dev/null; then
+    sudo dnf install -y jq >/dev/null
+  fi
+  if ! command -v jq &>/dev/null; then
+    err "jq is required and could not be installed automatically."
+    printf "  ${DIM}brew install jq${NC}   # macOS\n"
+    printf "  ${DIM}sudo apt install jq${NC}   # Debian/Ubuntu\n"
+    exit 1
+  fi
+  ok "Installed jq"
 fi
 
 # ── Validate existing settings.json ─────────────────────────────────
@@ -66,14 +97,10 @@ fi
 
 # ── Detect & clean existing install ──────────────────────────────────
 if [ -f "$HOOK_SCRIPT" ]; then
-  if grep -q "Deep Plan" "$HOOK_SCRIPT" 2>/dev/null; then
-    warn "Already installed: Deep Plan mode"
-  elif grep -q "Classic" "$HOOK_SCRIPT" 2>/dev/null; then
-    warn "Already installed: Classic mode"
-  elif grep -q "Orchestrator" "$HOOK_SCRIPT" 2>/dev/null; then
-    warn "Found legacy Orchestrator install — it will be replaced."
+  if [ -f "$DEEPEN_SCRIPT" ]; then
+    warn "Already installed: Deep Plan mode — reinstalling."
   else
-    warn "Already installed: unrecognized version"
+    warn "Already installed: Classic mode — reinstalling."
   fi
 
   # Backup old hook before overwriting
@@ -86,40 +113,20 @@ if [ -f "$HOOK_SCRIPT" ]; then
   printf "\n"
 fi
 
-# ── Mode selection ───────────────────────────────────────────────────
-printf "${BOLD}Choose a mode:${NC}\n\n"
-printf "  ${BOLD}1${NC}  Classic ${DIM}— default bypass${NC}\n"
-printf "     ${DIM}Auto-approve plans instantly and land the session in${NC}\n"
-printf "     ${DIM}bypassPermissions. Simple and silent. Nothing else touched.${NC}\n\n"
-printf "  ${BOLD}2${NC}  Deep Plan ${DIM}(recommended)${NC}\n"
-printf "     ${DIM}Everything in Classic, PLUS: while you are IN plan mode, a${NC}\n"
-printf "     ${DIM}UserPromptSubmit hook injects deep-reasoning guidance so${NC}\n"
-printf "     ${DIM}planning runs deliberately; it auto-stops once you leave${NC}\n"
-printf "     ${DIM}plan mode. Sets effortLevel=low as the cheap normal-mode${NC}\n"
-printf "     ${DIM}baseline and adds 'claude-plan' / 'claude-fast' shell aliases.${NC}\n"
-printf "     ${DIM}Note: the in-plan boost is a PROMPT nudge, not the real${NC}\n"
-printf "     ${DIM}effort knob (hooks cannot set effort). 'claude-plan' is the${NC}\n"
-printf "     ${DIM}real max-effort launch. See the README for the why.${NC}\n\n"
-
-while true; do
-  printf "${CYAN}>${NC} Enter mode [1/2]: "
-  read -r MODE
-  case "$MODE" in
-    1|2) break ;;
-    *) err "Please enter 1 or 2." ;;
-  esac
-done
-printf "\n"
-
 # ── Install hook script(s) ──────────────────────────────────────────
 mkdir -p "$HOOK_DIR"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# Use the local checkout only when run from a file; `curl | bash` and
+# `bash <(curl ...)` download the hooks from GitHub instead.
+SCRIPT_DIR=""
+if [ -f "${BASH_SOURCE[0]:-}" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 
 # Helper: place a repo file at a destination, from local checkout or GitHub.
 place_file() {
   local src_rel="$1" dest="$2"
-  if [ -f "${SCRIPT_DIR}/${src_rel}" ]; then
+  if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/${src_rel}" ]; then
     cp -f "${SCRIPT_DIR}/${src_rel}" "$dest"
   else
     info "Downloading ${src_rel} from GitHub..."
@@ -151,149 +158,63 @@ fi
 HOOK_CMD="~/.claude/hooks/claude-plan-hook.sh"
 DEEPEN_CMD="~/.claude/hooks/plan-deepen.sh"
 
-if [ ! -f "$SETTINGS" ]; then
-  if [ "$MODE" = "2" ]; then
-    cat > "$SETTINGS" <<ENDJSON
-{
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  },
-  "effortLevel": "low",
-  "hooks": {
-    "PermissionRequest": [
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [{"type": "command", "command": "${HOOK_CMD}"}]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [{"type": "command", "command": "${DEEPEN_CMD}"}]
-      }
-    ]
-  }
-}
-ENDJSON
-  else
-    cat > "$SETTINGS" <<ENDJSON
-{
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  },
-  "hooks": {
-    "PermissionRequest": [
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [{"type": "command", "command": "${HOOK_CMD}"}]
-      }
-    ]
-  }
-}
-ENDJSON
-  fi
-  ok "Created ${SETTINGS}"
-else
+mkdir -p "$(dirname "$SETTINGS")"
+if [ -f "$SETTINGS" ]; then
   # Backup settings.json before modifying
   mkdir -p "$BACKUP_DIR"
   TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
   cp -f "$SETTINGS" "$BACKUP_DIR/settings.${TIMESTAMP}.json"
   info "Backed up settings.json to ${BACKUP_DIR}/"
-
-  TMP=$(mktemp)
-  trap 'rm -f "${TMP:-}"' EXIT
-
-  if ! jq --arg cmd "$HOOK_CMD" --arg deepen "$DEEPEN_CMD" --arg mode "$MODE" '
-    # ── Satisfy the CC 2.1.110+ gate ──────────────────────────────────
-    # A hook setMode:"bypassPermissions" is a silent no-op unless the
-    # session is already bypass-eligible. Setting permissions.defaultMode
-    # makes every session eligible so the hook actually lands bypass after
-    # ExitPlanMode instead of falling back to acceptEdits. (Existing
-    # permissions.* keys preserved.)
-    .permissions //= {} |
-    .permissions.defaultMode = "bypassPermissions" |
-
-    # ── effortLevel baseline (Deep Plan only) ─────────────────────────
-    # Deep Plan needs a cheap normal-mode floor so the in-plan boost has
-    # contrast. We set "low" only when effortLevel is unset, so we never
-    # clobber an explicit user choice.
-    ( if $mode == "2" and (.effortLevel == null) then .effortLevel = "low" else . end ) |
-
-    .hooks //= {} |
-
-    # ── PermissionRequest / ExitPlanMode: re-register our auto-approve ─
-    # Drop any prior entry pointing at our hooks, then re-add cleanly.
-    .hooks.PermissionRequest //= [] |
-    .hooks.PermissionRequest = [
-      .hooks.PermissionRequest[] |
-      .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook"; "i") | not)] |
-      select((.hooks // []) | length > 0)
-    ] |
-    .hooks.PermissionRequest += [{
-      "matcher": "ExitPlanMode",
-      "hooks": [{"type": "command", "command": $cmd}]
-    }] |
-
-    # ── PostToolUse: scrub legacy Orchestrator entries entirely ────────
-    # The old Orchestrator mode injected on PostToolUse/ExitPlanMode. That
-    # mode is removed; strip any entry that points at our hooks.
-    .hooks.PostToolUse //= [] |
-    .hooks.PostToolUse = [
-      .hooks.PostToolUse[] |
-      .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook"; "i") | not)] |
-      select((.hooks // []) | length > 0)
-    ] |
-    ( if .hooks.PostToolUse == [] then del(.hooks.PostToolUse) else . end ) |
-
-    # ── UserPromptSubmit / plan-deepen ────────────────────────────────
-    # Always scrub our prior plan-deepen entry first (idempotent), keeping
-    # any unrelated UserPromptSubmit hooks (e.g. status-line integrations).
-    .hooks.UserPromptSubmit //= [] |
-    .hooks.UserPromptSubmit = [
-      .hooks.UserPromptSubmit[] |
-      .hooks = [(.hooks // [])[] | select((.command // "") | test("plan-deepen"; "i") | not)] |
-      select((.hooks // []) | length > 0)
-    ] |
-    # Only Deep Plan (mode 2) re-adds the plan-deepen entry.
-    ( if $mode == "2" then
-        .hooks.UserPromptSubmit += [{
-          "hooks": [{"type": "command", "command": $deepen}]
-        }]
-      else . end ) |
-    ( if .hooks.UserPromptSubmit == [] then del(.hooks.UserPromptSubmit) else . end ) |
-
-    # ── Legacy Stop cleanup (older revisions wired Stop) ──────────────
-    if .hooks.Stop then
-      .hooks.Stop = [
-        .hooks.Stop[] |
-        .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook|plan-deepen"; "i") | not)]
-      ] |
-      .hooks.Stop = [.hooks.Stop[] | select((.hooks // []) | length > 0)]
-    else . end |
-    if .hooks.Stop == [] then del(.hooks.Stop) else . end
-  ' "$SETTINGS" > "$TMP" 2>/dev/null; then
-    err "jq transform failed — settings.json not modified."
-    rm -f "$TMP"
-    exit 1
-  fi
-
-  # Validate the output is valid JSON before replacing
-  if ! jq empty "$TMP" 2>/dev/null; then
-    err "jq produced invalid JSON — settings.json not modified."
-    rm -f "$TMP"
-    exit 1
-  fi
-
-  # Verify output is not empty / smaller than a sane minimum
-  NEW_SIZE=$(wc -c < "$TMP" | tr -d ' ')
-  if [ "$NEW_SIZE" -lt 10 ]; then
-    err "jq output too small (${NEW_SIZE} bytes) — settings.json not modified."
-    rm -f "$TMP"
-    exit 1
-  fi
-
-  mv "$TMP" "$SETTINGS"
-  ok "Updated ${SETTINGS}"
+  SRC="$SETTINGS"
+else
+  SRC=$(mktemp)
+  echo '{}' > "$SRC"
 fi
+
+TMP=$(mktemp)
+trap 'rm -f "${TMP:-}"' EXIT
+
+if ! jq --arg cmd "$HOOK_CMD" --arg deepen "$DEEPEN_CMD" --arg mode "$MODE" '
+  # ── Satisfy the CC 2.1.110+ gate ────────────────────────────────────
+  # A hook setMode:"bypassPermissions" is a silent no-op unless the
+  # session is already bypass-eligible. Setting permissions.defaultMode
+  # makes every session eligible. (Existing permissions.* keys preserved.)
+  .permissions //= {} |
+  .permissions.defaultMode = "bypassPermissions" |
+
+  # ── effortLevel baseline (Deep Plan only, never clobbers a user choice)
+  ( if $mode == "2" and (.effortLevel == null) then .effortLevel = "low" else . end ) |
+
+  # ── Drop every entry pointing at our hooks, in any event, so reruns and
+  # leftovers from older versions are cleaned up. Unrelated hooks stay.
+  .hooks = ((.hooks // {}) | with_entries(
+    .value = [ .value[] |
+      .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook|plan-deepen"; "i") | not)] |
+      select(.hooks | length > 0) ]
+  ) | with_entries(select(.value | length > 0))) |
+
+  # ── Re-register ours ────────────────────────────────────────────────
+  .hooks.PermissionRequest += [{
+    "matcher": "ExitPlanMode",
+    "hooks": [{"type": "command", "command": $cmd}]
+  }] |
+  ( if $mode == "2" then
+      .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $deepen}]}]
+    else . end )
+' "$SRC" > "$TMP" 2>/dev/null; then
+  err "jq transform failed — settings.json not modified."
+  exit 1
+fi
+
+# Validate the output is valid JSON before replacing
+if ! jq empty "$TMP" 2>/dev/null; then
+  err "jq produced invalid JSON — settings.json not modified."
+  exit 1
+fi
+
+[ "$SRC" != "$SETTINGS" ] && rm -f "$SRC"
+mv "$TMP" "$SETTINGS"
+ok "Updated ${SETTINGS}"
 
 # ── Shell aliases (Deep Plan only) ──────────────────────────────────
 # claude-plan = launch whole session at MAX effort (the real knob; also
@@ -381,6 +302,6 @@ if [ "$MODE" = "2" ]; then
   printf "  ${DIM}Run 'source ${RC_FILE}' (or open a new shell) to load the aliases.${NC}\n"
   printf "  ${DIM}The in-plan boost is a prompt nudge, not the effort knob — see README.${NC}\n"
 fi
-printf "  ${DIM}To switch modes, run the installer again.${NC}\n"
+printf "  ${DIM}To switch modes, rerun with --classic or --deep.${NC}\n"
 printf "  ${DIM}To uninstall: curl -fsSL ${REPO_RAW}/uninstall.sh | bash${NC}\n"
 printf "\n"
