@@ -51,7 +51,7 @@ if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
   if ! jq '
     .hooks = ((.hooks // {}) | with_entries(
       .value = [ .value[] |
-        .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook|plan-deepen"; "i") | not)] |
+        .hooks = [(.hooks // [])[] | select((.command // "") | test("\\.claude/hooks/(claude-plan-hook|plan-deepen)\\.sh") | not)] |
         select(.hooks | length > 0) ]
     ) | with_entries(select(.value | length > 0))) |
     ( if .hooks == {} then del(.hooks) else . end )

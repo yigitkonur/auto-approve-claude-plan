@@ -159,7 +159,7 @@ HOOK_CMD="~/.claude/hooks/claude-plan-hook.sh"
 DEEPEN_CMD="~/.claude/hooks/plan-deepen.sh"
 
 mkdir -p "$(dirname "$SETTINGS")"
-if [ -f "$SETTINGS" ]; then
+if [ -f "$SETTINGS" ] && [ -n "$(tr -d '[:space:]' < "$SETTINGS")" ]; then
   # Backup settings.json before modifying
   mkdir -p "$BACKUP_DIR"
   TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
@@ -189,7 +189,7 @@ if ! jq --arg cmd "$HOOK_CMD" --arg deepen "$DEEPEN_CMD" --arg mode "$MODE" '
   # leftovers from older versions are cleaned up. Unrelated hooks stay.
   .hooks = ((.hooks // {}) | with_entries(
     .value = [ .value[] |
-      .hooks = [(.hooks // [])[] | select((.command // "") | test("auto-approve|claude-plan-hook|plan-deepen"; "i") | not)] |
+      .hooks = [(.hooks // [])[] | select((.command // "") | test("\\.claude/hooks/(claude-plan-hook|plan-deepen)\\.sh") | not)] |
       select(.hooks | length > 0) ]
   ) | with_entries(select(.value | length > 0))) |
 
@@ -206,8 +206,8 @@ if ! jq --arg cmd "$HOOK_CMD" --arg deepen "$DEEPEN_CMD" --arg mode "$MODE" '
   exit 1
 fi
 
-# Validate the output is valid JSON before replacing
-if ! jq empty "$TMP" 2>/dev/null; then
+# Validate the output is a JSON object before replacing
+if ! jq -e 'type == "object"' "$TMP" >/dev/null 2>&1; then
   err "jq produced invalid JSON — settings.json not modified."
   exit 1
 fi
